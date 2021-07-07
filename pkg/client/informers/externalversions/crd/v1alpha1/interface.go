@@ -24,6 +24,8 @@ import (
 type Interface interface {
 	// ClusterNetworkPolicies returns a ClusterNetworkPolicyInformer.
 	ClusterNetworkPolicies() ClusterNetworkPolicyInformer
+	// Groups returns a GroupInformer.
+	Groups() GroupInformer
 	// NetworkPolicies returns a NetworkPolicyInformer.
 	NetworkPolicies() NetworkPolicyInformer
 	// Tiers returns a TierInformer.
@@ -46,6 +48,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // ClusterNetworkPolicies returns a ClusterNetworkPolicyInformer.
 func (v *version) ClusterNetworkPolicies() ClusterNetworkPolicyInformer {
 	return &clusterNetworkPolicyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// Groups returns a GroupInformer.
+func (v *version) Groups() GroupInformer {
+	return &groupInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // NetworkPolicies returns a NetworkPolicyInformer.

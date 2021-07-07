@@ -30,6 +30,10 @@ func (c *FakeCrdV1alpha1) ClusterNetworkPolicies() v1alpha1.ClusterNetworkPolicy
 	return &FakeClusterNetworkPolicies{c}
 }
 
+func (c *FakeCrdV1alpha1) Groups(namespace string) v1alpha1.GroupInterface {
+	return &FakeGroups{c, namespace}
+}
+
 func (c *FakeCrdV1alpha1) NetworkPolicies(namespace string) v1alpha1.NetworkPolicyInterface {
 	return &FakeNetworkPolicies{c, namespace}
 }

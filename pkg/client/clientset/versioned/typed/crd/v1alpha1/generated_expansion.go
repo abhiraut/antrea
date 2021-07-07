@@ -18,6 +18,8 @@ package v1alpha1
 
 type ClusterNetworkPolicyExpansion interface{}
 
+type GroupExpansion interface{}
+
 type NetworkPolicyExpansion interface{}
 
 type TierExpansion interface{}
