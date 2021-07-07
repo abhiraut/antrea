@@ -184,6 +184,7 @@ rules:
     resources:
       - externalentities
       - clustergroups
+      - groups
     verbs:
       - get
       - watch
@@ -196,6 +197,7 @@ rules:
       - crd.antrea.io
     resources:
       - clustergroups/status
+      - groups/status
     verbs:
       - update
   - apiGroups:

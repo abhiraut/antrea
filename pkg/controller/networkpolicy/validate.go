@@ -136,7 +136,7 @@ func NewNetworkPolicyValidator(networkPolicyController *NetworkPolicyController)
 	return &vr
 }
 
-// Validate function validates a ClusterGroup, Tier or Antrea Policy object
+// Validate function validates a Group, ClusterGroup, Tier or Antrea Policy object
 func (v *NetworkPolicyValidator) Validate(ar *admv1.AdmissionReview) *admv1.AdmissionResponse {
 	var result *metav1.Status
 	var msg string
@@ -178,6 +178,22 @@ func (v *NetworkPolicyValidator) Validate(ar *admv1.AdmissionReview) *admv1.Admi
 			}
 		}
 		msg, allowed = v.validateAntreaGroup(&curCG, &oldCG, op, ui)
+	case "Group":
+		klog.V(2).Info("Validating Group CRD")
+		var curG, oldG crdv1alpha1.Group
+		if curRaw != nil {
+			if err := json.Unmarshal(curRaw, &curG); err != nil {
+				klog.Errorf("Error de-serializing current Group")
+				return GetAdmissionResponseForErr(err)
+			}
+		}
+		if oldRaw != nil {
+			if err := json.Unmarshal(oldRaw, &oldG); err != nil {
+				klog.Errorf("Error de-serializing old Group")
+				return GetAdmissionResponseForErr(err)
+			}
+		}
+		msg, allowed = v.validateAntreaGroup(&curG, &oldG, op, ui)
 	case "ClusterNetworkPolicy":
 		klog.V(2).Info("Validating Antrea ClusterNetworkPolicy CRD")
 		var curCNP, oldCNP crdv1alpha1.ClusterNetworkPolicy
@@ -284,8 +300,8 @@ func (a *antreaPolicyValidator) validatePort(ingress, egress []crdv1alpha1.Rule)
 	return nil
 }
 
-// validateAntreaGroup validates the admission of a ClusterGroup resource
-func (v *NetworkPolicyValidator) validateAntreaGroup(curCG, oldCG *crdv1alpha2.ClusterGroup, op admv1.Operation, userInfo authenticationv1.UserInfo) (string, bool) {
+// validateAntreaGroup validates the admission of a Group, ClusterGroup resource
+func (v *NetworkPolicyValidator) validateAntreaGroup(curCG, oldCG interface{}, op admv1.Operation, userInfo authenticationv1.UserInfo) (string, bool) {
 	allowed := true
 	reason := ""
 	switch op {
@@ -690,9 +706,13 @@ func (g *groupValidator) validateChildGroup(s *crdv1alpha2.ClusterGroup, isUpdat
 	return "", true
 }
 
-// createValidate validates the CREATE events of ClusterGroup resources.
+// createValidate validates the CREATE events of Group, ClusterGroup resources.
 func (g *groupValidator) createValidate(curObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
-	curCG := curObj.(*crdv1alpha2.ClusterGroup)
+	var curCG *crdv1alpha2.ClusterGroup
+	switch curObj.(type) {
+	case *crdv1alpha2.ClusterGroup:
+		curCG = curObj.(*crdv1alpha2.ClusterGroup)
+	}
 	reason, allowed := validateAntreaGroupSpec(curCG.Spec)
 	if !allowed {
 		return reason, allowed
@@ -702,7 +722,11 @@ func (g *groupValidator) createValidate(curObj interface{}, userInfo authenticat
 
 // updateValidate validates the UPDATE events of ClusterGroup resources.
 func (g *groupValidator) updateValidate(curObj, oldObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
-	curCG := curObj.(*crdv1alpha2.ClusterGroup)
+	var curCG *crdv1alpha2.ClusterGroup
+	switch curObj.(type) {
+	case *crdv1alpha2.ClusterGroup:
+		curCG = curObj.(*crdv1alpha2.ClusterGroup)
+	}
 	reason, allowed := validateAntreaGroupSpec(curCG.Spec)
 	if !allowed {
 		return reason, allowed
@@ -712,7 +736,11 @@ func (g *groupValidator) updateValidate(curObj, oldObj interface{}, userInfo aut
 
 // deleteValidate validates the DELETE events of ClusterGroup resources.
 func (g *groupValidator) deleteValidate(oldObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
-	oldCG := oldObj.(*crdv1alpha2.ClusterGroup)
+	var oldCG *crdv1alpha2.ClusterGroup
+	switch oldObj.(type) {
+	case *crdv1alpha2.ClusterGroup:
+		oldCG = oldObj.(*crdv1alpha2.ClusterGroup)
+	}
 	// ClusterGroup with existing ACNP references cannot be deleted.
 	cnps, err := g.networkPolicyController.cnpInformer.Informer().GetIndexer().ByIndex(ClusterGroupIndex, oldCG.Name)
 	if err != nil {

@@ -89,6 +89,7 @@ var allowedPaths = []string{
 	"/validate/acnp",
 	"/validate/anp",
 	"/validate/clustergroup",
+	"/validate/group",
 	"/convert/clustergroup",
 }
 

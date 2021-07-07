@@ -557,3 +557,90 @@ type TierList struct {
 
 	Items []Tier `json:"items"`
 }
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type Group struct {
+	metav1.TypeMeta `json:",inline"`
+	// Standard metadata of the object.
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Desired state of the group.
+	Spec GroupSpec `json:"spec"`
+	// Most recently observed status of the group.
+	Status GroupStatus `json:"status"`
+}
+
+type GroupSpec struct {
+	// Select Pods matching the labels set in the PodSelector in
+	// AppliedTo/To/From fields from the Group's own Namespace.
+	// If set with NamespaceSelector, Pods are matched from Namespaces
+	// matched by the NamespaceSelector.
+	// Cannot be set with any other selector except NamespaceSelector.
+	// +optional
+	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
+	// Select all Pods from Namespaces matched by this selector, as
+	// workloads in AppliedTo/To/From fields. If set with PodSelector,
+	// Pods are matched from Namespaces matched by the NamespaceSelector.
+	// Cannot be set with any other selector except PodSelector.
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+	// IPBlocks describe the IPAddresses/IPBlocks that are matched in to/from.
+	// IPBlocks cannot be set as part of the AppliedTo field.
+	// Cannot be set with any other selector or ServiceReference.
+	// +optional
+	IPBlocks []IPBlock `json:"ipBlocks,omitempty"`
+	// Select ExternalEntities from Group's own Namespace as workloads
+	// in AppliedTo/To/From fields. If set with NamespaceSelector,
+	// ExternalEntities are matched from Namespaces matched by the
+	// NamespaceSelector.
+	// Cannot be set with any other selector except NamespaceSelector.
+	// +optional
+	ExternalEntitySelector *metav1.LabelSelector `json:"externalEntitySelector,omitempty"`
+	// Select backend Pods of the referred Service.
+	// Cannot be set with any other selector or ipBlock.
+	// +optional
+	ServiceReference *ServiceReference `json:"serviceReference,omitempty"`
+	// Select other Groups within the same Namespace by name. The Groups must already
+	// exist and must not contain ChildGroups themselves.
+	// Cannot be set with any selector/IPBlock.
+	// +optional
+	ChildGroups []GroupReference `json:"childGroups,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type GroupList struct {
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []Group `json:"items,omitempty"`
+}
+
+type GroupConditionType string
+
+const GroupMembersComputed GroupConditionType = "GroupMembersComputed"
+
+type GroupCondition struct {
+	Type               GroupConditionType `json:"type"`
+	Status             v1.ConditionStatus `json:"status"`
+	LastTransitionTime metav1.Time        `json:"lastTransitionTime,omitempty"`
+}
+
+// GroupStatus represents information about the status of a Group.
+type GroupStatus struct {
+	Conditions []GroupCondition `json:"conditions,omitempty"`
+}
+
+// ServiceReference represent reference to a v1.Service.
+type ServiceReference struct {
+	// Name of the Service
+	Name string `json:"name,omitempty"`
+	// Namespace of the Service
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// GroupReference represent reference to a Group.
+type GroupReference string
