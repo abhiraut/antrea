@@ -383,6 +383,14 @@ func (v *antreaPolicyValidator) clusterGroupExists(name string) bool {
 	return true
 }
 
+func (v *antreaPolicyValidator) groupExists(name, namespace string) bool {
+	_, err := v.networkPolicyController.gLister.Groups(namespace).Get(name)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
 // GetAdmissionResponseForErr returns an object of type AdmissionResponse with
 // the submitted error message.
 func GetAdmissionResponseForErr(err error) *admv1.AdmissionResponse {
@@ -651,9 +659,9 @@ func (t *tierValidator) deleteValidate(oldObj interface{}, userInfo authenticati
 	return "", true
 }
 
-// validateAntreaGroupSpec ensures that an IPBlock is not set along with namespaceSelector and/or a
+// validateAntreaClusterGroupSpec ensures that an IPBlock is not set along with namespaceSelector and/or a
 // podSelector. Similarly, ExternalEntitySelector cannot be set with PodSelector.
-func validateAntreaGroupSpec(s crdv1alpha2.GroupSpec) (string, bool) {
+func validateAntreaClusterGroupSpec(s crdv1alpha2.GroupSpec) (string, bool) {
 	errMsg := "At most one of podSelector, externalEntitySelector, serviceReference, ipBlock, ipBlocks or childGroups can be set for a ClusterGroup"
 	if s.PodSelector != nil && s.ExternalEntitySelector != nil {
 		return errMsg, false
@@ -675,6 +683,30 @@ func validateAntreaGroupSpec(s crdv1alpha2.GroupSpec) (string, bool) {
 		childGroups = 1
 	}
 	if selector+serviceRef+ipBlock+ipBlocks+childGroups > 1 {
+		return errMsg, false
+	}
+	return "", true
+}
+
+func validateAntreaGroupSpec(s crdv1alpha1.GroupSpec) (string, bool) {
+	errMsg := "At most one of podSelector, externalEntitySelector, serviceReference, ipBlocks or childGroups can be set for a Group"
+	if s.PodSelector != nil && s.ExternalEntitySelector != nil {
+		return errMsg, false
+	}
+	selector, serviceRef, ipBlocks, childGroups := 0, 0, 0, 0
+	if s.NamespaceSelector != nil || s.ExternalEntitySelector != nil || s.PodSelector != nil {
+		selector = 1
+	}
+	if len(s.IPBlocks) > 0 {
+		ipBlocks = 1
+	}
+	if s.ServiceReference != nil {
+		serviceRef = 1
+	}
+	if len(s.ChildGroups) > 0 {
+		childGroups = 1
+	}
+	if selector+serviceRef+ipBlocks+childGroups > 1 {
 		return errMsg, false
 	}
 	return "", true
@@ -709,38 +741,60 @@ func (g *groupValidator) validateChildGroup(s *crdv1alpha2.ClusterGroup, isUpdat
 // createValidate validates the CREATE events of Group, ClusterGroup resources.
 func (g *groupValidator) createValidate(curObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
 	var curCG *crdv1alpha2.ClusterGroup
+	var curG *crdv1alpha1.Group
+	var reason string
+	var allowed bool
 	switch curObj.(type) {
 	case *crdv1alpha2.ClusterGroup:
 		curCG = curObj.(*crdv1alpha2.ClusterGroup)
+		reason, allowed = validateAntreaClusterGroupSpec(curCG.Spec)
+	case *crdv1alpha1.Group:
+		curG = curObj.(*crdv1alpha1.Group)
+		reason, allowed = validateAntreaGroupSpec(curG.Spec)
 	}
-	reason, allowed := validateAntreaGroupSpec(curCG.Spec)
 	if !allowed {
 		return reason, allowed
 	}
+	// TODO: validate child groups for Group
 	return g.validateChildGroup(curCG, false)
 }
 
 // updateValidate validates the UPDATE events of ClusterGroup resources.
 func (g *groupValidator) updateValidate(curObj, oldObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
 	var curCG *crdv1alpha2.ClusterGroup
+	var curG *crdv1alpha1.Group
+	var reason string
+	var allowed bool
 	switch curObj.(type) {
 	case *crdv1alpha2.ClusterGroup:
 		curCG = curObj.(*crdv1alpha2.ClusterGroup)
+		reason, allowed = validateAntreaClusterGroupSpec(curCG.Spec)
+	case *crdv1alpha1.Group:
+		curG = curObj.(*crdv1alpha1.Group)
+		reason, allowed = validateAntreaGroupSpec(curG.Spec)
 	}
-	reason, allowed := validateAntreaGroupSpec(curCG.Spec)
 	if !allowed {
 		return reason, allowed
 	}
 	return g.validateChildGroup(curCG, true)
 }
 
-// deleteValidate validates the DELETE events of ClusterGroup resources.
+// deleteValidate validates the DELETE events of Group and ClusterGroup resources.
 func (g *groupValidator) deleteValidate(oldObj interface{}, userInfo authenticationv1.UserInfo) (string, bool) {
 	var oldCG *crdv1alpha2.ClusterGroup
+	var oldG *crdv1alpha1.Group
 	switch oldObj.(type) {
 	case *crdv1alpha2.ClusterGroup:
 		oldCG = oldObj.(*crdv1alpha2.ClusterGroup)
+		return g.deleteValidateCG(oldCG)
+	case *crdv1alpha1.Group:
+		oldG = oldObj.(*crdv1alpha1.Group)
+		return g.deleteValidateGroup(oldG)
 	}
+	return "", true
+}
+
+func (g *groupValidator) deleteValidateCG(oldCG *crdv1alpha2.ClusterGroup) (string, bool) {
 	// ClusterGroup with existing ACNP references cannot be deleted.
 	cnps, err := g.networkPolicyController.cnpInformer.Informer().GetIndexer().ByIndex(ClusterGroupIndex, oldCG.Name)
 	if err != nil {
@@ -766,6 +820,36 @@ func (g *groupValidator) deleteValidate(oldObj interface{}, userInfo authenticat
 			parentGrpNameList[i] = grpObject.Name
 		}
 		return fmt.Sprintf("ClusterGroup %s is referenced by %d ClusterGroups as childGroup: %v", oldCG.Name, len(parentGrps), parentGrpNameList), false
+	}
+	return "", true
+}
+
+func (g *groupValidator) deleteValidateGroup(oldG *crdv1alpha1.Group) (string, bool) {
+	// Group with existing ANP references cannot be deleted.
+	anps, err := g.networkPolicyController.anpInformer.Informer().GetIndexer().ByIndex(GroupIndex, oldG.Name)
+	if err != nil {
+		return fmt.Sprintf("error occurred when retrieving Antrea NetworkPolicies that refer to Group %s: %v", oldG.Name, err), false
+	}
+	if len(anps) > 0 {
+		anpNameList := make([]string, len(anps))
+		for i := range anps {
+			anpObj := anps[i].(*crdv1alpha1.NetworkPolicy)
+			anpNameList[i] = anpObj.Name
+		}
+		return fmt.Sprintf("Group %s is referenced by %d Antrea NetworkPolicies: %v", oldG.Name, len(anps), anpNameList), false
+	}
+	// Group referenced by other Groups as childGroup cannot be deleted.
+	parentGrps, err := g.networkPolicyController.internalGroupStore.GetByIndex(store.ChildGroupIndex, oldG.Name)
+	if err != nil {
+		return fmt.Sprintf("error retrieving parents of Group %s: %v", oldG.Name, err), false
+	}
+	if len(parentGrps) > 0 {
+		parentGrpNameList := make([]string, len(parentGrps))
+		for i := range parentGrps {
+			grpObject := parentGrps[i].(*types.Group)
+			parentGrpNameList[i] = grpObject.Name
+		}
+		return fmt.Sprintf("Group %s is referenced by %d Groups as childGroup: %v", oldG.Name, len(parentGrps), parentGrpNameList), false
 	}
 	return "", true
 }

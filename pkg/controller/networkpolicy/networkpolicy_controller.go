@@ -83,6 +83,8 @@ const (
 	PriorityIndex = "priority"
 	// ClusterGroupIndex is used to index ClusterNetworkPolicies by ClusterGroup names.
 	ClusterGroupIndex = "clustergroup"
+	// GroupIndex is used to index Antrea NetworkPolicies by Group names.
+	GroupIndex = "groups"
 
 	appliedToGroupType grouping.GroupType = "appliedToGroup"
 	addressGroupType   grouping.GroupType = "addressGroup"
@@ -176,6 +178,14 @@ type NetworkPolicyController struct {
 	// once.
 	cgListerSynced cache.InformerSynced
 
+	gInformer secinformers.GroupInformer
+	// gLister is able to list/get Groups and is populated by the shared informer passed to
+	// NewGroupController.
+	gLister seclisters.GroupLister
+	// gListerSynced is a function which returns true if the Group shared informer has been synced at least
+	// once.
+	gListerSynced cache.InformerSynced
+
 	// addressGroupStore is the storage where the populated Address Groups are stored.
 	addressGroupStore storage.Interface
 	// appliedToGroupStore is the storage where the populated AppliedTo Groups are stored.
@@ -227,6 +237,7 @@ func NewNetworkPolicyController(kubeClient clientset.Interface,
 	anpInformer secinformers.NetworkPolicyInformer,
 	tierInformer secinformers.TierInformer,
 	cgInformer crdv1a3informers.ClusterGroupInformer,
+	gInformer secinformers.GroupInformer,
 	addressGroupStore storage.Interface,
 	appliedToGroupStore storage.Interface,
 	internalNetworkPolicyStore storage.Interface,
@@ -280,6 +291,9 @@ func NewNetworkPolicyController(kubeClient clientset.Interface,
 		n.cgInformer = cgInformer
 		n.cgLister = cgInformer.Lister()
 		n.cgListerSynced = cgInformer.Informer().HasSynced
+		n.gInformer = gInformer
+		n.gLister = gInformer.Lister()
+		n.gListerSynced = gInformer.Informer().HasSynced
 		// Add handlers for Namespace events.
 		n.namespaceInformer.Informer().AddEventHandlerWithResyncPeriod(
 			cache.ResourceEventHandlerFuncs{
@@ -375,6 +389,45 @@ func NewNetworkPolicyController(kubeClient clientset.Interface,
 					}
 					return []string{anp.Spec.Tier}, nil
 				},
+				GroupIndex: func(obj interface{}) ([]string, error) {
+					anp, ok := obj.(*secv1alpha1.NetworkPolicy)
+					if !ok {
+						return []string{}, nil
+					}
+					groupNames := sets.String{}
+					for _, appTo := range anp.Spec.AppliedTo {
+						if appTo.Group != "" {
+							groupNames.Insert(appTo.Group)
+						}
+					}
+					if len(anp.Spec.Ingress) == 0 && len(anp.Spec.Egress) == 0 {
+						return groupNames.List(), nil
+					}
+					appendGroups := func(rule secv1alpha1.Rule) {
+						for _, peer := range rule.To {
+							if peer.Group != "" {
+								groupNames.Insert(peer.Group)
+							}
+						}
+						for _, peer := range rule.From {
+							if peer.Group != "" {
+								groupNames.Insert(peer.Group)
+							}
+						}
+						for _, appTo := range rule.AppliedTo {
+							if appTo.Group != "" {
+								groupNames.Insert(appTo.Group)
+							}
+						}
+					}
+					for _, rule := range anp.Spec.Egress {
+						appendGroups(rule)
+					}
+					for _, rule := range anp.Spec.Ingress {
+						appendGroups(rule)
+					}
+					return groupNames.List(), nil
+				},
 			},
 		)
 		anpInformer.Informer().AddEventHandlerWithResyncPeriod(
@@ -391,6 +444,15 @@ func NewNetworkPolicyController(kubeClient clientset.Interface,
 				AddFunc:    n.addClusterGroup,
 				UpdateFunc: n.updateClusterGroup,
 				DeleteFunc: n.deleteClusterGroup,
+			},
+			resyncPeriod,
+		)
+		// Add event handlers for Group notification.
+		gInformer.Informer().AddEventHandlerWithResyncPeriod(
+			cache.ResourceEventHandlerFuncs{
+				AddFunc:    n.addGroup,
+				UpdateFunc: n.updateGroup,
+				DeleteFunc: n.deleteGroup,
 			},
 			resyncPeriod,
 		)
